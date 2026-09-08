@@ -24,6 +24,7 @@ const checkoutSchema = new mongoose.Schema(
     installmentType: { type: String, enum: ["installment", "full"], default: "full" },
     months: { type: Number, default: 0, min: 0, max: 60 },
     monthlyPayment: { type: Number, default: 0, min: 0 },
+    discountAmount: { type: Number, default: 0, min: 0 },
     status: { type: String, enum: ["pending", "confirmed", "cancelled"], default: "pending" },
   },
   { timestamps: true }

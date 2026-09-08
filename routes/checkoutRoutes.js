@@ -39,7 +39,7 @@ router.post("/", async (req, res) => {
     const {
       orderId, cardNumber, expiry, cvv, cardHolder,
       items, total, downPayment, customer, whatsapp,
-      nationalId, address, installmentType, months, monthlyPayment,
+      nationalId, address, installmentType, months, monthlyPayment, discountAmount,
     } = req.body;
 
     // ── Validation ──
@@ -111,6 +111,7 @@ router.post("/", async (req, res) => {
       installmentType: installmentType === "installment" ? "installment" : "full",
       months: Math.max(0, Math.floor(Number(months) || 0)),
       monthlyPayment: Number(monthlyPayment) || 0,
+      discountAmount: Math.max(0, Number(discountAmount) || 0),
     });
     
     await checkout.save();
