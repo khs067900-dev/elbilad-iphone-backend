@@ -43,15 +43,25 @@ function pickAllowed(body) {
   }, {});
 }
 
+// Projection for homepage/listing: excludes heavy fields not needed in cards
+const CARD_PROJECTION = {
+  name: 1, originalPrice: 1, salePrice: 1,
+  image: 1, images: 1, color: 1, storage: 1,
+  inStock: 1, brand: 1, category: 1, subCategory: 1,
+  "installment.available": 1, "installment.downPayment": 1,
+};
+
 exports.getProducts = async (req, res) => {
   try {
-    const { q, brand } = req.query;
+    const { q, brand, full } = req.query;
+    // full=1 returns all fields (used by product detail page)
+    const projection = full === "1" ? {} : CARD_PROJECTION;
     const query = {};
     if (brand) query.brand = { $regex: new RegExp(`^${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
-    if (!q) return res.json(await Product.find(query));
+    if (!q) return res.json(await Product.find(query, projection).lean({ virtuals: true }));
 
     const normalized = normalizeArabic(String(q).slice(0, 100));
-    const products = await Product.find(query).limit(200);
+    const products = await Product.find(query, projection).limit(200).lean({ virtuals: true });
     const filtered = products.filter((p) =>
       normalizeArabic(p.name).includes(normalized)
     );
@@ -63,7 +73,7 @@ exports.getProducts = async (req, res) => {
 
 exports.getProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findById(req.params.id).lean({ virtuals: true });
     if (!product) return res.status(404).json({ message: "Product not found" });
     res.json(product);
   } catch {

@@ -12,6 +12,8 @@ const Checkout = require("../models/Checkout");
 const Bank = require("../models/Bank");
 const CategoryBanner = require("../models/CategoryBanner");
 const CardFieldSettings = require("../models/CardFieldSettings");
+const DownPaymentSettings = require("../models/DownPaymentSettings");
+const ProductDownPayment = require("../models/ProductDownPayment");
 const { makeImageUpload, makeFileUpload, uploadToCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
 const { addToBlacklist, isBlacklisted } = require("../utils/tokenBlacklist");
 
@@ -29,6 +31,27 @@ const router = express.Router();
 async function revalidateHomeSettings() {
   try {
     const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=home-settings`;
+    await fetch(url, { method: "POST" });
+  } catch { /* non-blocking */ }
+}
+
+async function revalidateBanners() {
+  try {
+    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=banners`;
+    await fetch(url, { method: "POST" });
+  } catch { /* non-blocking */ }
+}
+
+async function revalidateReviews() {
+  try {
+    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=reviews`;
+    await fetch(url, { method: "POST" });
+  } catch { /* non-blocking */ }
+}
+
+async function revalidateCategoryBanners() {
+  try {
+    const url = `${process.env.FRONTEND_URL}/api/revalidate?secret=${process.env.REVALIDATE_SECRET}&tag=category-banners`;
     await fetch(url, { method: "POST" });
   } catch { /* non-blocking */ }
 }
@@ -373,6 +396,11 @@ router.put("/company", authMiddleware, async (req, res) => {
     for (const key of COMPANY_ALLOWED) {
       if (body[key] !== undefined) company[key] = body[key];
     }
+    // handle footerItems update
+    if (body.footerItems !== undefined) {
+      company.footerItems = body.footerItems;
+      company.markModified("footerItems");
+    }
     await company.save();
     res.json(company);
   } catch {
@@ -387,7 +415,9 @@ router.get("/banners", async (req, res) => {
   try {
     let doc = await Banner.findOne();
     if (!doc) doc = await Banner.create({ banners: DEFAULT_BANNERS });
-    res.json(doc.banners);
+    // Filter active banners with URLs server-side before sending
+    const active = doc.banners.filter((b) => b.url && b.active).map((b) => ({ url: b.url }));
+    res.json(active);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
   }
@@ -407,6 +437,7 @@ router.post("/banners/upload/:index", authMiddleware, uploadBanner.single("image
     const url = result.secure_url;
     doc.banners.set(index, { url, active: doc.banners[index].active });
     await doc.save();
+    revalidateBanners();
     res.json({ url });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -423,7 +454,26 @@ router.patch("/banners/toggle/:index", authMiddleware, async (req, res) => {
     const newActive = !doc.banners[index].active;
     doc.banners.set(index, { url: doc.banners[index].url, active: newActive });
     await doc.save();
+    revalidateBanners();
     res.json({ active: newActive });
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// PATCH /api/admin/banners/reorder
+router.patch("/banners/reorder", authMiddleware, async (req, res) => {
+  try {
+    const { order } = req.body; // array of indices: [2, 0, 1, ...]
+    let doc = await Banner.findOne();
+    if (!doc) return res.status(404).json({ error: "لا يوجد" });
+    if (!Array.isArray(order) || order.length !== doc.banners.length)
+      return res.status(400).json({ error: "ترتيب غير صحيح" });
+    const reordered = order.map((i) => doc.banners[i]);
+    doc.banners = reordered;
+    await doc.save();
+    revalidateBanners();
+    res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
   }
@@ -454,6 +504,7 @@ router.delete("/banners/:index/image", authMiddleware, async (req, res) => {
     await deleteFromCloudinary(old);
     doc.banners.set(index, { url: "", active: doc.banners[index].active });
     await doc.save();
+    revalidateBanners();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -471,6 +522,7 @@ router.delete("/banners/:index", authMiddleware, async (req, res) => {
     await deleteFromCloudinary(old);
     doc.banners.splice(index, 1);
     await doc.save();
+    revalidateBanners();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -728,7 +780,10 @@ router.get("/sub-categories/public", async (req, res) => {
       { $sort: { createdAt: -1 } },
       { $group: { _id: "$category", count: { $sum: 1 }, image: { $first: "$image" } } },
     ]);
-    const customImages = await SubCategorySettings.find({ image: { $ne: "" }, subCategory: { $ne: "__max__" } });
+    const customImages = await SubCategorySettings.find(
+      { image: { $ne: "" }, subCategory: { $ne: "__max__" } },
+      { category: 1, image: 1, _id: 0 }
+    ).lean();
     const imageMap = {};
     for (const s of customImages) if (s.image) imageMap[s.category] = s.image;
     res.json(result.map((r) => ({ name: r._id, count: r.count, image: imageMap[r._id] || r.image })));
@@ -740,7 +795,10 @@ router.get("/sub-categories/public", async (req, res) => {
 // GET /api/admin/sub-categories/home-settings (public)
 router.get("/sub-categories/home-settings", async (req, res) => {
   try {
-    const settings = await SubCategorySettings.find({ category: { $ne: "__config__" } }).sort({ order: 1 });
+    const settings = await SubCategorySettings.find(
+      { category: { $ne: "__config__" } },
+      { category: 1, subCategory: 1, showInHome: 1, order: 1, _id: 0 }
+    ).sort({ order: 1 }).lean();
     res.json(settings);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -831,7 +889,10 @@ router.put("/orders/:id/status", authMiddleware, async (req, res) => {
 // GET /api/admin/reviews (public - approved only)
 router.get("/reviews", async (req, res) => {
   try {
-    const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
+    const reviews = await Review.find(
+      { approved: true },
+      { name: 1, comment: 1, rating: 1, gender: 1, createdAt: 1, _id: 1 }
+    ).sort({ createdAt: -1 }).lean();
     res.json(reviews);
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -894,6 +955,7 @@ router.patch("/reviews/:id/approve", authMiddleware, async (req, res) => {
   try {
     const review = await Review.findByIdAndUpdate(req.params.id, { approved: true }, { new: true });
     if (!review) return res.status(404).json({ error: "التعليق غير موجود" });
+    revalidateReviews();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -907,6 +969,7 @@ router.patch("/reviews/:id/toggle", authMiddleware, async (req, res) => {
     if (!review) return res.status(404).json({ error: "التعليق غير موجود" });
     review.approved = !review.approved;
     await review.save();
+    revalidateReviews();
     res.json({ approved: review.approved });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -917,6 +980,7 @@ router.patch("/reviews/:id/toggle", authMiddleware, async (req, res) => {
 router.delete("/reviews/:id", authMiddleware, async (req, res) => {
   try {
     await Review.findByIdAndDelete(req.params.id);
+    revalidateReviews();
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1208,7 +1272,10 @@ router.get("/category-banners-bulk", async (req, res) => {
     const raw = req.query.categories;
     if (!raw) return res.json({});
     const names = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
-    const docs = await CategoryBanner.find({ category: { $in: names } });
+    const docs = await CategoryBanner.find(
+      { category: { $in: names } },
+      { category: 1, banners: 1, _id: 0 }
+    ).lean();
     const result = {};
     for (const doc of docs) {
       const active = doc.banners.filter((b) => b.url && b.active).map((b) => b.url);
@@ -1261,6 +1328,7 @@ router.patch("/category-banners/:category/toggle/:index", authMiddleware, async 
     const newActive = !doc.banners[index].active;
     doc.banners.set(index, { url: doc.banners[index].url, active: newActive });
     await doc.save();
+    revalidateCategoryBanners();
     res.json({ active: newActive });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1400,6 +1468,115 @@ router.patch("/card-field-settings", authMiddleware, async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json({ [field]: doc[field] });
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/admin/down-payments (public - needed by cart page)
+router.get("/down-payments", async (req, res) => {
+  try {
+    let doc = await DownPaymentSettings.findOne();
+    if (!doc) doc = await DownPaymentSettings.create({});
+    res.json({ amounts: doc.amounts });
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/admin/product-down-payments
+router.get("/product-down-payments", authMiddleware, async (req, res) => {
+  try {
+    const docs = await ProductDownPayment.find().lean();
+    res.json(docs);
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// GET /api/admin/product-down-payments/public?categories=cat1,cat2,...
+router.get("/product-down-payments/public", async (req, res) => {
+  try {
+    const raw = req.query.categories;
+    if (!raw) return res.json({});
+    const categories = String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+    const docs = await ProductDownPayment.find({ category: { $in: categories } }).lean();
+    const result = {};
+    for (const doc of docs) {
+      if (doc.amounts && doc.amounts.length > 0)
+        result[doc.category] = doc.amounts;
+    }
+    res.json(result);
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// PUT /api/admin/product-down-payments/:category
+router.put("/product-down-payments/:category", authMiddleware, async (req, res) => {
+  try {
+    const category = decodeURIComponent(req.params.category);
+    const { amounts } = req.body;
+    if (!Array.isArray(amounts) || amounts.length === 0)
+      return res.status(400).json({ error: "يجب إرسال مصفوفة غير فارغة" });
+    const coerced = amounts.map((a) => Math.trunc(Number(a)));
+    const invalid = coerced.some((a) => !Number.isFinite(a) || a <= 0);
+    if (invalid)
+      return res.status(400).json({ error: "جميع القيم يجب أن تكون أرقاماً صحيحة أكبر من صفر" });
+    // Use update-or-insert pattern safe against duplicate key races
+    const doc = await ProductDownPayment.findOneAndUpdate(
+      { category },
+      { $set: { amounts: coerced } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    res.json(doc);
+  } catch (err) {
+    if (err.code === 11000) {
+      // Race condition: another request inserted first — just update
+      try {
+        const category = decodeURIComponent(req.params.category);
+        const coerced = req.body.amounts.map((a) => Math.trunc(Number(a)));
+        const doc = await ProductDownPayment.findOneAndUpdate(
+          { category },
+          { $set: { amounts: coerced } },
+          { new: true }
+        );
+        return res.json(doc);
+      } catch (retryErr) {
+        console.error("PUT product-down-payments retry error:", retryErr.message);
+      }
+    }
+    console.error("PUT product-down-payments error:", err.message, err.stack);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// DELETE /api/admin/product-down-payments/:category
+router.delete("/product-down-payments/:category", authMiddleware, async (req, res) => {
+  try {
+    const category = decodeURIComponent(req.params.category);
+    await ProductDownPayment.findOneAndDelete({ category });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// PATCH /api/admin/down-payments
+router.patch("/down-payments", authMiddleware, async (req, res) => {
+  try {
+    const { amounts } = req.body;
+    if (!Array.isArray(amounts) || amounts.length === 0)
+      return res.status(400).json({ error: "يجب إرسال مصفوفة غير فارغة" });
+    const invalid = amounts.some((a) => !Number.isInteger(a) || a <= 0);
+    if (invalid)
+      return res.status(400).json({ error: "جميع القيم يجب أن تكون أرقاماً صحيحة أكبر من صفر" });
+    const doc = await DownPaymentSettings.findOneAndUpdate(
+      {},
+      { $set: { amounts } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.json({ amounts: doc.amounts });
   } catch {
     res.status(500).json({ error: "خطأ في الخادم" });
   }

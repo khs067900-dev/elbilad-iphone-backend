@@ -49,6 +49,11 @@ const productSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for common query patterns
+productSchema.index({ category: 1 });
+productSchema.index({ brand: 1 });
+productSchema.index({ createdAt: -1 });
+
 productSchema.virtual("discountPercent").get(function () {
   if (this.salePrice != null && this.salePrice !== this.originalPrice) {
     return Math.round(((this.originalPrice - this.salePrice) / this.originalPrice) * 100);
