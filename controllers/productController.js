@@ -45,9 +45,10 @@ function pickAllowed(body) {
 
 // Projection for homepage/listing: excludes heavy fields not needed in cards
 const CARD_PROJECTION = {
-  name: 1, originalPrice: 1, salePrice: 1,
+  name: 1, originalPrice: 1, salePrice: 1, discountPercent: 1,
   image: 1, images: 1, color: 1, storage: 1,
   inStock: 1, brand: 1, category: 1, subCategory: 1,
+  variants: 1,
   "installment.available": 1, "installment.downPayment": 1,
 };
 

@@ -1,17 +1,65 @@
 const mongoose = require("mongoose");
 
+const storageOptionSchema = new mongoose.Schema({
+  storage: String,
+  originalPrice: Number,
+  salePrice: Number,
+}, { _id: false });
+
+const variantSchema = new mongoose.Schema({
+  name: String,
+  color: String,
+  colorCode: String,
+  defaultStorage: String,
+  images: [String],
+  storageOptions: [storageOptionSchema],
+}, { _id: false });
+
+const specItemSchema = new mongoose.Schema({
+  key: String,
+  value: String,
+}, { _id: false });
+
+const specGroupSchema = new mongoose.Schema({
+  group: String,
+  items: [specItemSchema],
+}, { _id: false });
+
+const mediaSchema = new mongoose.Schema({
+  type: String,
+  url: String,
+  alt: String,
+  sortOrder: Number,
+}, { _id: false });
+
+const sectionSchema = new mongoose.Schema({
+  type: String,
+  title: String,
+  subtitle: String,
+  content: { type: mongoose.Schema.Types.Mixed },
+  media: [mediaSchema],
+  sortOrder: Number,
+  isActive: { type: Boolean, default: true },
+}, { _id: false });
+
+const galleryItemSchema = new mongoose.Schema({
+  url: String,
+  caption: String,
+}, { _id: false });
+
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
+    brief: { type: String },
     originalPrice: { type: Number, required: true },
     salePrice: { type: Number },
     description: { type: String },
     image: { type: String },
     images: [{ type: String }],
-    color: { type: String },
-    storage: { type: String },
-    network: { type: String },
-    screenSize: { type: String },
+    variants: [variantSchema],
+    specGroups: [specGroupSchema],
+    sections: [sectionSchema],
+    gallery: [galleryItemSchema],
     specs: {
       screen: String,
       processor: String,
@@ -49,7 +97,6 @@ const productSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for common query patterns
 productSchema.index({ category: 1 });
 productSchema.index({ brand: 1 });
 productSchema.index({ createdAt: -1 });
