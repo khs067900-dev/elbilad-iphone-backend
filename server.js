@@ -12,6 +12,7 @@ const adminRoutes = require("./routes/adminRoutes");
 connectDB();
 
 const app = express();
+app.set("trust proxy", 1);
 
 // ── CORS ──────────────────────────────────────────────────
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
